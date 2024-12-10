@@ -5,7 +5,7 @@
 */
 
 // Lisp Library
-const char LispLibrary[] = "";
+//const char LispLibrary[] = "";
 
 // Compile options
 
@@ -16,11 +16,12 @@ const char LispLibrary[] = "";
 #define sdcardsupport
 #define gfxsupport
 // #define lisplibrary
-// #define extensions
+#define extensions
+#define touchscreen
 
 // Includes
 
-// #include "LispLibrary.h"
+ #include "LispLibrary.h"
 #include <setjmp.h>
 #include <SPI.h>
 #include <Wire.h>
@@ -29,6 +30,11 @@ const char LispLibrary[] = "";
 #include "soc/periph_defs.h" // Not sure why necessary
 #include <I2S.h>
 #include <TFT_eSPI.h>
+
+#if defined(touchscreen)
+#include "TouchDrvGT911.hpp"
+TouchDrvGT911 touch;
+#endif
 
 #define COLOR_WHITE 0xFFFF
 #define COLOR_BLACK 0x0000
@@ -47,6 +53,8 @@ const char LispLibrary[] = "";
 #define TDECK_KEYBOARD_INT 46
 #define GFX_DEV_DEVICE LILYGO_T_DECK
 #define TFT_BACKLITE TDECK_TFT_BACKLIGHT
+
+#define TDECK_TOUCH_INT     16
 
 TFT_eSPI tft;
 
@@ -4741,6 +4749,67 @@ object *fn_invertdisplay (object *args, object *env) {
 }
 
 // T-Deck extras
+char touchKeyMod(char temp){
+  #if defined (touchscreen)
+ /* t-deck / blackberry keyboard missing symbols
+    missing mapped	alt symbol
+    `       k       ' 
+    ~       p       @ 
+    %       $       
+    ^       a       * 
+    &       q       # 
+    =       o       + 
+    <       t       ( 
+    >       y       ) 
+    \       u       _ 
+    |       g       / 
+            
+    [       alt-t   (
+    ]       alt-y   )
+            
+    {       n/a
+    }       n/a
+    tab  	space
+  */
+  bool received_touch = false;
+
+  //clear any previous readings since it buffers those
+  do {
+    int16_t x[5], y[5];
+    uint8_t touched = touch.getPoint(x, y, touch.getSupportTouchPoint());
+  } while(touch.isPressed());
+
+  // touch.ispressed() will trigger like 5 times if you press it once so we have to loop through it and get the touchpoints
+  do {
+    int16_t x[5], y[5];
+    uint8_t touched = touch.getPoint(x, y, touch.getSupportTouchPoint());
+    if (touched > 0) {
+      received_touch = true;
+    }
+  } while(touch.isPressed());
+  
+  if (received_touch) {
+      if (temp == 'k')      return '`';
+      else if (temp == 'p') return '~';
+      else if (temp == '$') return '%';
+      else if (temp == 'a') return '^';
+      else if (temp == 'q') return '&';
+      else if (temp == 'o') return '=';
+      else if (temp == 't') return '<';
+      else if (temp == 'y') return '>';
+      else if (temp == 'u') return '\\';
+      else if (temp == 'g') return '|';
+      else if (temp == '(') return '[';
+      else if (temp == ')') return ']';
+      else if (temp == ' ') return '\t';
+    //}
+  }
+  #else
+  if (temp == '@') temp = '~';
+  if (temp == '_') temp = '\\';
+  #endif
+  return temp;
+}
 
 char getKey () {
   char temp;
@@ -4749,8 +4818,7 @@ char getKey () {
     while (!Wire1.available());
     temp = Wire1.read();
   } while ((temp == 0) || (temp ==255));
-  if (temp == '@') temp = '~';
-  if (temp == '_') temp = '\\';
+  temp = touchKeyMod(temp);
   return temp;
 }
 
@@ -6521,8 +6589,7 @@ int gserial () {
       if (Wire1.available()) {
         char temp = Wire1.read();
         if ((temp != 0) && (temp !=255)) {
-          if (temp == '@') temp = '~';
-          if (temp == '_') temp = '\\';
+          temp = touchKeyMod(temp);
           ProcessKey(temp);
         }
       }
@@ -6541,8 +6608,7 @@ int gserial () {
     if (Wire1.available()) {
       char temp = Wire1.read();
       if ((temp != 0) && (temp !=255)) {
-        if (temp == '@') temp = '~';
-        if (temp == '_') temp = '\\';
+        temp = touchKeyMod(temp);
         ProcessKey(temp);
       }
     }
@@ -6732,6 +6798,27 @@ void initBoard () {
   digitalWrite(TDECK_TFT_CS, HIGH);
   pinMode(TDECK_SPI_MISO, INPUT_PULLUP);
   SPI.begin(TDECK_SPI_SCK, TDECK_SPI_MISO, TDECK_SPI_MOSI); //SD
+ 
+}
+
+void initTouch(){
+  #if defined (touchscreen)
+  pinMode(TDECK_TOUCH_INT, INPUT);
+  touch.setPins(-1, TDECK_TOUCH_INT);\
+  //keyboard already initialized the I2C?
+  if (!touch.begin(Wire1, GT911_SLAVE_ADDRESS_L)) {
+    while (1) {
+      Serial.println("Failed to find GT911 - check your wiring!");
+      delay(1000);
+    }
+  }
+  // Set touch max xy
+  touch.setMaxCoordinates(320, 240);
+  // Set swap xy
+  touch.setSwapXY(true);
+  // Set mirror xy
+  touch.setMirrorXY(false, true);
+  #endif
 }
 
 void initgfx () {
@@ -6767,6 +6854,7 @@ void setup () {
   initgfx();
   initkybd();
   initsound();
+  initTouch();
   pfstring(PSTR("uLisp 4.7a "), pserial); pln(pserial);
 }
 
